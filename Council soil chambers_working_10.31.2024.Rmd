@@ -1,0 +1,1000 @@
+---
+title: "Council Soil Chamber" #time is in AK daylight time**  
+output: html_document
+date: "2024-10-22"
+---
+
+#Note that for comparison purposes, both instruments 
+were used to measure chamber fluxes on July 18, 2018 --> remove potential measurement duplicates from this date?
+
+#measure the Net Ecosystem Exchange (NEE) with the transparent chamber during the day (when photosynthesis is occurring) and the Ecosystem Respiration (Reco) with the opaque chamber during the night (when only respiration is happening), then subtract the Reco value from the NEE value to get GPP: GPP = NEE (transparent chamber) - Reco (opaque chamber)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r, include=FALSE}
+rm(list= ls())
+
+library(data.table)
+library(ggplot2)
+library(cowplot)
+library(openair)
+library(plotrix)
+library(signal)
+library(svMisc)
+library(zoo)
+library(stringr)
+library(plyr)
+library(viridis)
+library(lubridate)
+library(tidyverse)
+library(gridExtra)
+library(plotly)
+library(RColorBrewer)
+library(pracma)
+library(dplyr)
+library(openair)
+
+```
+#all reshaped and merged df (taken from below, need to clean up code)
+```{r}
+#filtered for p<0.05; units umol/m2/s or nmol/m2/s
+df_soilchambers_filtered = fread('./council_filtered_soil_chamber_fluxes_2017to2019.csv')
+
+#fluxes and moisture/temp df merged; FCO2 in units g/m2/s
+df_fulljoin = fread('./council_fulljoin_soilchamber_fluxes_moisttemp_2017to2019.csv')
+
+#used transparent and opaque chambers to identify NEE and RECO, then merged back together 
+df_NEE_RECO2 = fread('./council_fulljoin_soilchamber_fluxes_moisttemp_2017to2019.csv')
+
+#calculated GPP (NEE - Reco)
+df_NEE_RECO2_GPP = fread('./council_NEE_RECO2_GPP_2017to2019.csv')
+
+
+```
+
+
+#Filter out all flux measurements with a p-value greater than 0.05 - these are not good instrument measurements
+```{r}
+
+#"C:\Users\kkent\Documents\Council Data\CN_MM71_soil_chamber_fluxes_LGR_20210120.csv"
+#"C:\Users\kkent\Documents\Council Data\CN_MM71_soil_chamber_fluxes_Picarro_20210120.csv"
+
+
+#soil chamber data from LGR
+df_LGR = fread('~/Council Data/CN_MM71_soil_chamber_fluxes_LGR_20210120.csv')
+
+#soil chamber data from Picarro
+df_Pic = fread('~/Council Data/CN_MM71_soil_chamber_fluxes_Picarro_20210120.csv')
+
+#Remove first row with units 
+
+df_LGR <- df_LGR[-1,]
+df_Pic <- df_Pic[-1,]
+
+#Create a row for each df that denotes which instrument was used so we can tell when we merge later 
+df_LGR$instrument <- "LGR"
+df_Pic$instrument <- "Pic"
+
+#make numeric columns numeric 
+df_LGR[, 16:23] <- lapply(df_LGR[, 16:23], as.numeric)
+df_Pic[, 16:23] <- lapply(df_Pic[, 16:23], as.numeric)
+
+
+#Soil moisture and temp 
+
+df_soil_temp_thaw = fread("~/Council Data/CN_MM71_ chamber_soil_temp_moist_thaw_20210120.csv")
+df_soil_temp_thaw<- df_soil_temp_thaw[-1,] #remove first row with units 
+
+#Make the numeric columns numeric, all were imported as character 
+df_soil_temp_thaw[, 16:24] <- lapply(df_soil_temp_thaw[, 16:24], as.numeric)
+
+#thaw depth in cm
+#soil temp in C
+#standing water in cm 
+#time = AKDT
+#measurement date = yyyy-mm-dd
+
+
+#For LGR dataset, there are p values - filter out all p>0.05 before binding; no p values available for Pic dataset
+library(dplyr)
+
+# Filter the dataset to omit rows with flux_CO2_Pvalue and CH4_Pvalue above 0.049
+df_LGR_filtered <- df_LGR %>%
+  filter(flux_CO2_Pvalue <= 0.049, CH4_Pvalue <= 0.049)
+```
+
+#Create useable time
+```{r}
+#create useable date for each dataset jere  
+ df_LGR$measurement_date = as.character(df_LGR$measurement_date)
+ df_LGR_filtered$measurement_date = as.character(df_LGR_filtered$measurement_date)
+ df_Pic$measurement_date = as.character(df_Pic$measurement_date)
+df_soil_temp_thaw$measurement_date = as.character(df_soil_temp_thaw$measurement_date)
+
+df_LGR$measurement_date = as.POSIXct(df_LGR$measurement_date, format = "%Y-%m-%d") 
+df_LGR_filtered$measurement_date = as.POSIXct(df_LGR_filtered$measurement_date, format = "%Y-%m-%d")
+df_Pic$measurement_date= as.POSIXct(df_Pic$measurement_date, format = "%Y-%m-%d")
+df_soil_temp_thaw$measurement_date= as.POSIXct(df_soil_temp_thaw$measurement_date, format = "%Y-%m-%d")
+
+```
+
+
+```{r}
+
+#combine the df
+df_soilchambers_filtered <- rbind(df_LGR_filtered, df_Pic) #with LGR filtered for p value
+df_soilchambers <- rbind(df_LGR, df_Pic) #not filtered, all original data 
+
+
+#make the fluxes numeric; R read them in as characters 
+df_soilchambers$flux_CO2 = as.numeric(df_soilchambers$flux_CO2)
+df_soilchambers$flux_CH4 = as.numeric(df_soilchambers$flux_CH4)
+df_soilchambers_filtered$flux_CO2 = as.numeric(df_soilchambers_filtered$flux_CO2)
+df_soilchambers_filtered$flux_CH4 = as.numeric(df_soilchambers_filtered$flux_CH4)
+
+
+#Save new df of orig soil data, not filtered
+write.csv(x = df_soilchambers,file = './council_soil_chamber_fluxes_2017to2019.csv',quote = F,row.names = F)
+
+#Save new df of filtered LGR data with Pic data 
+write.csv(x = df_soilchambers_filtered,file = './council_filtered_soil_chamber_fluxes_2017to2019.csv',quote = F,row.names = F)
+
+#check
+df_soilchambers = fread('./council_soil_chamber_fluxes_2017to2019.csv')
+
+```
+
+#Load merged and filtered soil chamber df
+```{r}
+#Can clear above and reload filtered version of df 
+df_soilchambers_filtered = fread('./council_filtered_soil_chamber_fluxes_2017to2019.csv')
+
+#fluxes in units umol_m-2_s-1
+```
+
+
+
+#create useable date and timestamp for the combined soil chamber df & soil moisture/temp df 
+```{r}
+# Convert the 'measurement_date' to Date format if not already
+df_soilchambers_filtered$measurement_date <- as.Date(df_soilchambers_filtered$measurement_date, format = "%Y-%m-%d")
+df_soil_temp_thaw$measurement_date <- as.Date(df_soil_temp_thaw$measurement_date, format = "%Y-%m-%d")
+
+
+# Convert time to a proper time format
+df_soilchambers_filtered$time <- format(strptime(df_soilchambers_filtered$time, format="%H:%M"), "%H:%M")
+df_soil_temp_thaw$time <- format(strptime(df_soil_temp_thaw$time, format="%H:%M"), "%H:%M")
+
+# Combine the date and time into a new column
+df_soilchambers_filtered$date <- paste(df_soilchambers_filtered$measurement_date, df_soilchambers_filtered$time)
+df_soil_temp_thaw$date <- paste(df_soil_temp_thaw$measurement_date, df_soil_temp_thaw$time)
+
+# Convert the new datetime column to the desired format "%Y%m%d%H%M"
+df_soilchambers_filtered$date <- format(as.POSIXct(df_soilchambers_filtered$date, format="%Y-%m-%d %H:%M"))
+df_soil_temp_thaw$date <- format(as.POSIXct(df_soil_temp_thaw$date, format="%Y-%m-%d %H:%M"))
+
+
+```
+
+
+#Extract the experiment type and add new column: BGC = biogeochem, EC = eddy covar tower footprint, MW = micro-warming experiment
+```{r}
+library(stringr)
+
+# Create a new column for experiment type / plot type 
+df_soilchambers_filtered$plot_type <- str_extract(df_soilchambers_filtered$plot_ID, "^[A-Z]+")
+df_soil_temp_thaw$plot_type <- str_extract(df_soil_temp_thaw$plot_ID, "^[A-Z]+")
+
+```
+
+#subset the dataset by chamber type = opaque vs transparent 
+
+```{r}
+library(dplyr)
+
+#These datasets should be filtered for p<0.05, and have proper datetime formatting 
+
+# Subset the dataset for chamber_type = "opq" -- use this for ecosystem resp 
+df_opq <- df_soilchambers_filtered %>%
+  filter(chamber_type == "Opq")
+
+#Save new df 
+write.csv(x = df_opq,file = './council_opaque_soil_chamber_fluxes_2017to2019.csv',quote = F,row.names = F)
+
+
+# Subset the dataset for chamber_type = "trns" -- use this for NEE 
+df_trns <- df_soilchambers_filtered %>%
+  filter(chamber_type == "Trns")
+
+#Save new df 
+write.csv(x = df_trns,file = './council_transparent_soil_chamber_fluxes_2017to2019.csv',quote = F,row.names = F)
+```
+
+#Create new df to reduce to variables of interest
+```{r}
+df_soil = data.frame(df_soilchambers_filtered$site,
+                   df_soilchambers_filtered$area,
+                   df_soilchambers_filtered$plot_type,
+                   df_soilchambers_filtered$plot_ID,
+                    df_soilchambers_filtered$latitude,
+                   df_soilchambers_filtered$longitude,
+                   df_soilchambers_filtered$easting,
+                    df_soilchambers_filtered$northing,
+                   df_soilchambers_filtered$measurement_date,
+                   df_soilchambers_filtered$time,
+                     df_soilchambers_filtered$landscape_position,
+                    df_soilchambers_filtered$chamber_type,
+                   df_soilchambers_filtered$flux_CO2,
+                   df_soilchambers_filtered$flux_CH4,
+                     df_soilchambers_filtered$instrument,
+                      df_soilchambers_filtered$date)
+
+names(df_soil) = c('site',
+                 'area',
+                'plot_type',
+                'plot_ID',
+                'latitude',
+                'longitude',
+                'easting',
+                'northing',
+                 'measurement_date',
+                 'time',
+                 'landscape_position',
+                 'chamber_type',
+                 'flux_CO2',
+                 'flux_CH4',
+                'instrument',
+                 'date')
+          
+```
+
+
+#Convert soil chamber fluxes from u or nmol/m2/s to g/m2/s
+```{r}
+#tower data in g/m2 -- better to use g or leave as umol?
+
+# Net CO2 Flux - convert from umol/m2/s to gC/m2/s
+df_soil <- df_soil %>%
+  mutate(FCO2 = ifelse(is.na(flux_CO2), 0, flux_CO2 * (1/1000000) * 12))
+
+
+#Net CH4 flux --> convert from nmol/m2/s to gC/m2/s
+df_soil <- df_soil %>%
+  mutate(FCH4 = ifelse(is.na(flux_CH4), 0, flux_CH4 * (1/1000000000)*12))
+
+
+```
+
+#merge soil chamber flux data with temp and moisture 
+```{r}
+#take variables of interest from the soil chamber temp / thaw df 
+
+df_moisttemp <- df_soil_temp_thaw[, c("site", "area", "plot_type", "plot_ID", "latitude", "longitude", "easting", "northing", "measurement_date", "time", "landscape_position", "inundated", "standing_water_depth", "soil_temp_10_cm", "soil_temp_15_cm", "soil_temp_20_cm", "air_temp", "thawdepth", "VWC", "Ka", "date" )]
+
+
+# Merge the two df by matching on plot_ID, measurement date, and landscape position 
+df_combined <- df_soil %>%
+  left_join(df_moisttemp %>% select(plot_ID, measurement_date, landscape_position,inundated, standing_water_depth, soil_temp_10_cm, soil_temp_15_cm, soil_temp_20_cm, air_temp, thawdepth, VWC, Ka), 
+            by = c("plot_ID", "measurement_date", "landscape_position"))
+
+
+
+#Save new df 
+write.csv(x = df_combined,file = './council_soilchamber_fluxes_moisttemp_2017to2019.csv',quote = F,row.names = F)
+
+
+#Kyle recommended this way of joining the flux and temp/moisture df
+# Merge the two df by matching on plot_ID, measurement date, and landscape position 
+df_fulljoin <- df_soil %>%
+  full_join(df_moisttemp %>% select(plot_ID, measurement_date, landscape_position,inundated, standing_water_depth, soil_temp_10_cm, soil_temp_15_cm, soil_temp_20_cm, air_temp, thawdepth, VWC, Ka), 
+            by = c("plot_ID", "measurement_date", "landscape_position"))
+
+#Save new df 
+write.csv(x = df_fulljoin,file = './council_fulljoin_soilchamber_fluxes_moisttemp_2017to2019.csv',quote = F,row.names = F)
+
+#load new df 
+df_fulljoin = fread('./council_fulljoin_soilchamber_fluxes_moisttemp_2017to2019.csv')
+```
+
+
+#Create new df to identify NEE and RECO (and find GPP)
+```{r}
+# Subset the dataset for chamber_type = "trns" -- use this for NEE 
+df_trns <- df_fulljoin %>%
+  filter(chamber_type == "Trns")
+
+# Subset the dataset for chamber_type = "opq" -- use this for ecosystem resp 
+df_opq <- df_fulljoin %>%
+  filter(chamber_type == "Opq")
+
+#change "flux_CO2" in trns df to "NEE" and in opq df to "RECO" 
+# df_trns <- df_trns %>% rename(NEE = flux_CO2) #in umol 
+# df_opq <- df_opq %>% rename(RECO = flux_CO2) #in umol 
+df_trns <- df_trns %>% rename(NEE = FCO2) #in g
+df_opq <- df_opq %>% rename(RECO = FCO2) #in g
+
+#merge the df_trns and df_opq back together into one df - units gC
+df_NEE_RECO <- df_trns %>%
+  full_join(df_opq %>%select(plot_type, plot_ID, measurement_date, landscape_position, time, chamber_type, RECO, flux_CH4, inundated, standing_water_depth, soil_temp_10_cm, soil_temp_15_cm, soil_temp_20_cm, air_temp, thawdepth, VWC, Ka, instrument), 
+            by = c("plot_ID", "measurement_date", "landscape_position"))
+
+
+#merge the df_trns and df_opq back together into one df
+df_NEE_RECO <- df_trns %>%
+  full_join(df_opq %>%select(time, chamber_type, RECO, flux_CH4, inundated, standing_water_depth, soil_temp_10_cm, soil_temp_15_cm, soil_temp_20_cm, air_temp, thawdepth, VWC, Ka, instrument), 
+            by = c("plot_ID", "measurement_date", "landscape_position"))
+
+
+
+####using this version*******************************************************************************************
+
+# Merge the dataframes using the merge function - this cuts off all the extra RECO measurements that are not aligned with an NEE measurement-- excludes all RECO-only measurements, and makes sure everything is matched with both a transparent and opaque chamber
+df_NEE_RECO2 <- merge(df_trns, df_opq[, c("plot_ID", "measurement_date", "landscape_position", "RECO")], 
+                     by = c("plot_ID", "measurement_date", "landscape_position"), 
+                     all.x = TRUE)
+
+
+#save new NEE and RECO df 
+write.csv(x = df_NEE_RECO2,file = './council_NEE and RECO2_2017to2019.csv',quote = F,row.names = F)
+
+```
+
+#Calc GPP from difference between NEE and RECO: The combination of dark and transparent chambers --> GPP (NEE – Reco) 
+
+#**RECO - NEE to get a pos GPP **but required but typically makes more sense to have GPP be pos
+```{r}
+df_NEE_RECO2_GPP <- df_NEE_RECO2 %>%
+  mutate(GPP = NEE - RECO)
+
+#Save with GPP 
+write.csv(x = df_NEE_RECO2_GPP, file = './council_NEE_RECO2_GPP_2017to2019.csv', quote = F, row.names = F) 
+
+```
+
+
+#Boxplots 
+```{r}
+library(dplyr)
+library(tidyr)
+
+
+# Reshape the dataframe to long format
+df_long <- df_NEE_RECO2_GPP %>%
+  select(plot_ID, plot_type, landscape_position, measurement_date, NEE, RECO, GPP, inundated, soil_temp_10_cm, soil_temp_15_cm) %>%
+  pivot_longer(cols = c(NEE, RECO, GPP), 
+               names_to = "flux_type", 
+               values_to = "flux_value")
+
+# Create the boxplot: NEE and RECO flux vs landscape position 
+ggplot(df_long, aes(x = landscape_position, y = flux_value, fill = flux_type)) +
+  geom_boxplot() +
+  labs(title = "NEE, GPP, and RECO vs Landscape Position",
+       x = "Landscape Position",
+       y = "Flux Value (gCO2/m²/s)",
+       fill = "Flux Type") +
+   geom_hline(yintercept = 0)+
+  theme_minimal()
+
+
+# EC plot type NEE and RECO flux vs landscape position 
+ggplot(df_long %>% filter(plot_type == "EC"),
+       aes(x = landscape_position, y = flux_value, fill = flux_type)) +
+  geom_boxplot() +
+  labs(title = "EC plots: NEE, GPP, and RECO vs Landscape Position",
+       x = "Landscape Position",
+       y = "Flux Value (gCO2/m²/s)",
+       fill = "Flux Type") +
+   geom_hline(yintercept = 0)+
+  theme_minimal()
+
+# MW plots by landscape position 
+ggplot(df_long %>% filter(plot_type == "MW"),
+       aes(x = landscape_position, y = flux_value, fill = flux_type)) +
+  geom_boxplot() +
+  labs(title = "MW plots: NEE, GPP, and RECO vs Landscape Position",
+       x = "Landscape Position",
+       y = "Flux Value (gCO2/m²/s)",
+       fill = "Flux Type") +
+   geom_hline(yintercept = 0)+
+  theme_minimal()
+
+# BGC plots by landscape position 
+ggplot(df_long %>% filter(plot_type == "BGC"),
+       aes(x = landscape_position, y = flux_value, fill = flux_type)) +
+  geom_boxplot() +
+  labs(title = "BGC plots: NEE, GPP, and RECO vs Landscape Position",
+       x = "Landscape Position",
+       y = "Flux Value (gCO2/m²/s)",
+       fill = "Flux Type") +
+   geom_hline(yintercept = 0)+
+  theme_minimal()
+
+
+
+```
+
+
+#Boxplots by plot_type and landscape position 
+```{r}
+#GPP of each plot type by landscape position 
+ggplot(df_long %>% filter(flux_type == "GPP"),
+       aes(x = landscape_position, y = flux_value, fill = plot_type)) +
+  geom_boxplot() +
+  labs(title = "GPP vs Landscape Position",
+       x = "landscape position",
+       y = "GPP(gCO2/m²/s)",
+       fill = "Plot Type") +
+   geom_hline(yintercept = 0)+
+  theme_minimal()
+
+
+
+#with inundation 
+ggplot(df_long %>% filter(flux_type == "GPP"),
+       aes(x = plot_ID, y = flux_value, color = plot_type, shape = inundated )) +
+  geom_point() +
+  labs(title = "GPP vs Landscape Position & inundation",
+       x = "plot_ID",
+       y = "GPP(gCO2/m²/s)",
+       color = "Plot Type",
+       shape = 'inundated') +
+   geom_hline(yintercept = 0)+
+  theme_minimal()
+
+#with inundation 
+library(ggplot2)
+
+# Filter for inundated plots and create a bar plot
+ggplot(df_long %>% filter(inundated == "Y"), aes(x = plot_ID, fill = inundated)) +
+  geom_bar() +
+  labs(title = "Inundated Plots", x = "Plot ID", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+# looking at measurement date counts for each plot ID 
+ggplot(df_long, aes(x = plot_ID, fill = measurement_date)) +
+  geom_bar() +
+  labs(title = "Inundated Plots", x = "Plot ID", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+#Filter df by landscape position and flux type (GPP, NE, RECO)
+
+####filtering out for EC plots only, testing NEE
+```{r}
+library(nlme)
+library(lme4)
+
+library(dplyr)
+library(tidyr)
+# Step 1: Filter the dataframe for plot_ID = "EC"
+df_EC <- df_NEE_RECO2_GPP %>%
+  filter(plot_type == "EC")
+
+
+
+# Reshape the dataframe to long format
+df_EClong <- df_EC %>%
+  select(plot_ID, plot_type, landscape_position, measurement_date, NEE, RECO, GPP) %>%
+  pivot_longer(cols = c(NEE, RECO, GPP), 
+               names_to = "flux_type", 
+               values_to = "flux_value")
+
+#Re-arrange by flux type so you can analyze 
+
+# Sort the dataframe by the flux_type column
+df_EClong2 <- df_EClong %>% arrange(flux_type)
+
+# Load nlme package
+library(nlme)
+library(lme4)
+library(agricolae)
+library(car)
+library(emmeans)
+
+df_NEE <- df_EClong %>% filter(flux_type == "NEE")
+
+#histogram of distr of data in df_NEE
+hist(df_NEE$flux_value)
+#skewed a bit to the left
+
+#need car for this work
+model_NEE <- lme(flux_value ~ landscape_position, random = ~1 | plot_ID, data = df_NEE)
+summary(model_NEE)
+Anova(model_NEE, test.statistic = "F", type = "II", ddf = "Kenward-Roger")
+#this is still chi-sq....p = 0.0361
+
+model_NEE2<- lmer(flux_value ~ landscape_position + (1|plot_ID), data = df_NEE )
+summary(model_NEE2, corr = F)
+Anova(model_NEE2, type = "II", test.statistic = "F", ddf = "Kenward-Roger")
+#this works now with Kenward Roger 
+#p=0.087; not sig 
+
+#testing the model without a random effect of plot_id
+model_NEE3<- lm(flux_value ~ landscape_position, data = df_NEE )
+summary(model_NEE3, corr = F)
+Anova(model_NEE3, type = "II", test.statistic = "F", ddf = "Kenward-Roger")
+#without plot_ID as a random effect, this is sig with p = 0.015
+
+ #Testing which model is a beter fit: model_NEE2 = with random effect of plot_ID; model_NEE3 = without random effect of plot_ID 
+anova(model_NEE2, model_NEE3)
+#Results show lower AIC and BIC for model_NEE2, with random effect of plot_ID, so we will proceed with this version 
+```
+#Residuals and normality of mixed-effects model - ECC plots NEE2
+```{r}
+#checking normality of residuals distribution 
+plot(model_NEE2) # check constant variance
+lattice::qqmath(model_NEE2) # check normality of residuals
+plot(model_NEE2 , plot_ID ~ resid(., scaled=TRUE)) # equal var within Plots
+#---------------------------------------------------------------------------------------------------
+#checking how this QQ plot compares to plots created with normally distributed residuals
+#ASK CLAY - will this test work with my other datasets? just plug in diff dataset and test? 
+#How to do a glmm / glmer model in case of transformations not working 
+#how to transform / back transform (I do have negative values and 0 values in some cases)
+op <- par(mar = c(2,2,1,1), mfrow = c(5,5))
+
+# create first qq plot using model residuals
+# color it red
+qqnorm(residuals(model_NEE2), xlab = "", ylab = "", main = "", 
+       col = "red")
+qqline(residuals(model_NEE2))
+
+# now create 24 qq plots using Normal data with sigma(PB19Eri.angCN_LMM
+for(i in 1:24){
+  # rnorm() samples from a Normal dist'n 
+  d <- rnorm(length(residuals(model_NEE2)), 
+             mean = 0, sd = sigma(model_NEE2))
+  qqnorm(d, xlab = "", ylab = "", main = "")
+  qqline(d)
+}
+
+#These residuals look pretty good 
+
+#For further testing, if needed 
+qqnorm(residuals(model_NEE2))
+hist(residuals(model_NEE2)) #shows a bit of left skew
+
+#brown forsythe test to test variance among groups, want p to be above 0.05 to show no sig diff
+install.packages("onewaytests") #for a brown forscythe test
+library(onewaytests)
+##Testing for Homogeneity of variance
+## but these test for normality in data, not residuals, right? 
+# with Brown-Forsythe test
+#bf.test(dependent variable ~ independent variable, data = dataset) 
+bf.test(flux_value ~ landscape_position, data=df_NEE) #this is variance among groups, so diff not being stat sig is a good thing -> but p is 0.00843, so it is sig 
+#variance within groups test
+
+# with Levene's test
+#leveneTest(dataset$dependent variable, dataset$independent variable)
+leveneTest(df_NEE$flux_value, df_NEE$landscape_position) #p above 0.05 means there no sig variance within groups, so data is distr normally --> p = 0.57, so not sig 
+
+#If I need to log transform:
+#dataset$new_name of log dataset <- log(dataframe$dependent variable) 
+#same for square rooting transformation, just use "sqrt"
+
+
+#This not working, look into later 
+#checking ratio of largest grp var to smallest group var, needs to be 3 or below 
+grp_vars <- with(df_NEE, tapply(flux_type,landscape_position,var))
+max(grp_vars)/min(grp_vars)
+
+
+```
+
+####filtering out for EC plots only, testing GPP
+
+```{r}
+
+df_ECGPP <- df_EClong %>% filter(flux_type == "GPP")
+
+
+#  model_GPP2 <- lme(flux_value ~ landscape_position, random = ~1 | plot_ID, data = df_ECGPP)
+#  summary(model_GPP)
+# Anova(model_GPP) #uses Chi-sqr
+
+model_GPP<- lmer(flux_value ~ landscape_position + (1|plot_ID), data = df_ECGPP )
+summary(model_GPP2, corr = F)
+Anova(model_GPP2, type = "II", test.statistic = "F", ddf = "Kenward-Roger")
+#p=0.157; not sig 
+
+hist(df_ECGPP$flux_value)
+
+
+
+
+
+
+landscape_NLME <- lme(flux_value ~ landscape_position, random = ~1|plot_id, data = df_EClong2)
+#na.action=na.exclude) #lets R work around the 0 values in dataset
+summary(percentC_NLME, corr = F)
+anova(percentC_NLME)
+# each plot gets a fitted intercept
+coef(percentC_NLME)
+
+#this isn't working 
+#Anova(StDead_LMM, test.statistic = "F", type = "II", ddf = "Kenward-Roger")
+library(nlme)
+
+landscape_NLME <- lme(flux_value ~ landscape_position * plot_ID, data = df_EClong2 )
+summary(landscape_NLME, corr = F)
+anova(landscape_NLME)
+# each plot gets a fitted intercept
+coef(landscape_NLME)
+
+
+library(emmeans)
+emmeans(landscape_NLME, revpairwise ~ landscape_position | plot_ID) |>
+  confint() 
+#ASK CLAY: can we go over these results one more time, just to make sure I understand what's useful to report --> these results show up the average data value for a site type at each location, and the df and CL, right? What are the contrast estimates again? simply the difference in means for each site type between locations? just shows us which location has higher nutrient data averages and by how much? --> yes**
+
+#might not need to add in siteId as random, as the StDead_LMM model already incorporated it...?
+emmeans(landscape_NLME, pairwise ~ landscape_position | plot_type, random = ~1|plot_ID, adjust="tukey")
+
+library(multcomp)
+library(multcompView)
+library(emmeans)
+
+
+
+#Seeing if plot type has an effect 
+
+df_GPP_plottype <- df_long %>% filter(flux_type == "GPP") %>%
+   drop_na()  # This will remove any rows with NA values in any column
+
+model_GPP_plottype <- lme(flux_value ~ landscape_position, random = ~1 | plot_ID, data = df_GPP_plottype)
+summary(model_GPP_plottype)
+
+emm <- emmeans(model_GPP_plottype, ~ landscape_position)
+tukey_results <- pairs(emm, adjust = "tukey")
+summary(tukey_results)
+
+library(lme4)
+library(nlme)
+GPP_LMM <- lmer(flux_value ~ landscape_position + (1|plot_ID), data = df_GPP_plottype )
+summary(GPP_LMM, corr = F)
+Anova(GPP_LMM,test.statistic = "F", type = "II", ddf = "Kenward-Roger")
+# each plot gets a fitted intercept
+coef(GPP_LMM)
+
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+emGPP <- emmeans(GPP_LMM, specs = "landscape_position")
+cld(emGPP, Letter = "abcdefghijk")
+
+
+
+# add letters to data frame
+emm_probesK_df$letters <- tuk_probesK_cld$mcletters$Letters
+
+
+
+# Load necessary packages
+library(emmeans)
+library(multcomp)
+
+# Calculate the estimated marginal means
+emm <- emmeans(model_GPP_plottype, ~ landscape_position)
+
+# Get the compact letter display for Tukey groupings
+tukey_groups <- cld(emm, adjust = "tukey", Letters = letters)
+
+# View the results
+print(tukey_groups)
+
+
+# Extract significance letters for each landscape_position
+tukey_letters <- multcomp::cld(emm, Letters = letters) 
+
+
+
+#a more strict tukey, adheres to the p<0.05
+
+EC_GPP_LMM <- lmer(flux_type ~ landscape_position, + (1|plot_ID), data = df_GPP)
+library(multcomp)
+library(multcompView)
+emm <- emmeans(EC_GPP_NLME, specs = "landscape_position")
+cld(model_plottype, Letter = "abcdefghijk")
+
+
+
+#Anova(StDead_LMM, test.statistic = "F", type = "II", ddf = "Kenward-Roger")
+library(nlme)
+
+EC_GPP_NLME <- lme(flux_value ~ landscape_position, random = ~1 | plot_ID, data = df_GPP )
+summary(EC_GPP_NLME, corr = F)
+anova(EC_GPP_NLME)
+# each plot gets a fitted intercept
+coef(EC_GPP_NLME)
+
+
+# Extract only the NEE values from the flux_value column
+NEE_values <- df_long %>% filter(flux_type == "NEE")
+
+# mixed effect models
+library(lme4)
+library(emmeans)
+library(car)
+# lme model, pretty much an ANOVA
+EC_GPP_lme <- lme(flux_value ~ landscape_position, random = ~1 | plot_ID, data = df_GPP)
+summary(EC_GPP_lme, corr = F)
+Anova(EC_GPP_lme,test.statistic = "F", type = "II", ddf = "Kenward-Roger")
+# each plot gets a fitted intercept
+coef(EC_GPP_lme)
+
+```
+#Trying to get tukey 
+
+```{r}
+# Install multcomp if not already installed
+install.packages("multcomp")
+
+# Load the libraries
+library(lme4)
+library(emmeans)
+library(multcomp)
+
+# Fit the mixed effects model
+model_GPP_plottype <- lmer(flux_value ~ landscape_position + (1 | plot_ID), data = df_GPP_plottype)
+summary(model_GPP_plottype)
+
+# Calculate estimated marginal means
+emm <- emmeans(model_GPP_plottype, ~ landscape_position)
+
+
+# Perform Tukey's HSD test
+tukey_results <- pairs(emm, adjust = "tukey")
+summary(tukey_results)
+
+# get the compact letter displays using multcomp package function cld() 
+library(multcomp)
+tuk_emm <- glht(model_GPP_plottype, linfct = mcp(landscape_position = "Tukey"))
+tuk_emm_cld <- cld(tuk_emm)
+tuk_emm_cld
+
+#create df for tukey results 
+emm_tuk_df <- as.data.frame(emmeans(model_GPP_plottype, specs = "landscape_position"))
+# add letters to data frame
+emm_tuk_df$letters <- tuk_emm_cld$mcletters$Letters
+
+emcld<- emmeans(model_GPP_plottype, specs = "landscape_position")
+cld(emcld, Letter = "abcdefghijk")
+
+
+emm <- emmeans(model_GPP_plottype, ~ landscape_position)
+tukey_results <- pairs(emm, adjust = "tukey")
+summary(tukey_results)
+cld_results <- cld(tukey_results)
+
+
+```
+
+
+```{r}
+# Load necessary libraries
+library(lme4)
+library(emmeans)
+library(multcomp)
+
+# Fit the mixed effects model
+model_GPP_plottype <- lmer(flux_value ~ landscape_position + (1 | plot_ID), data = df_GPP_plottype)
+
+# Calculate estimated marginal means
+emm <- emmeans(model_GPP_plottype, ~ landscape_position)
+
+# Perform Tukey's HSD test
+tukey_results <- pairs(emm, adjust = "tukey")
+
+# Generate compact letter display for the Tukey results
+cld_results <- cld(emm)
+
+# View the results
+print(cld_results)
+
+str(tukey_results)
+
+```
+
+```{r}
+#Residuals and normality of mixed-effects model - ECC plots GPP
+
+#checking normality of residuals distribution 
+plot(model_NEE2) # check constant variance
+lattice::qqmath(model_NEE2) # check normality of residuals
+plot(model_NEE2 , plot_ID ~ resid(., scaled=TRUE)) # equal var within Plots
+#---------------------------------------------------------------------------------------------------
+#checking how this QQ plot compares to plots created with normally distributed residuals
+#ASK CLAY - will this test work with my other datasets? just plug in diff dataset and test? 
+#How to do a glmm / glmer model in case of transformations not working 
+#how to transform / back transform (I do have negative values and 0 values in some cases)
+op <- par(mar = c(2,2,1,1), mfrow = c(5,5))
+
+# create first qq plot using model residuals
+# color it red
+qqnorm(residuals(model_NEE2), xlab = "", ylab = "", main = "", 
+       col = "red")
+qqline(residuals(model_NEE2))
+
+# now create 24 qq plots using Normal data with sigma(PB19Eri.angCN_LMM
+for(i in 1:24){
+  # rnorm() samples from a Normal dist'n 
+  d <- rnorm(length(residuals(model_NEE2)), 
+             mean = 0, sd = sigma(model_NEE2))
+  qqnorm(d, xlab = "", ylab = "", main = "")
+  qqline(d)
+}
+
+#These residuals look pretty good 
+
+#For further testing, if needed 
+qqnorm(residuals(model_NEE2))
+hist(residuals(model_NEE2)) #shows a bit of left skew
+
+#brown forsythe test to test variance among groups, want p to be above 0.05 to show no sig diff
+install.packages("onewaytests") #for a brown forscythe test
+library(onewaytests)
+##Testing for Homogeneity of variance
+## but these test for normality in data, not residuals, right? 
+# with Brown-Forsythe test
+#bf.test(dependent variable ~ independent variable, data = dataset) 
+bf.test(flux_value ~ landscape_position, data=df_NEE) #this is variance among groups, so diff not being stat sig is a good thing -> but p is 0.00843, so it is sig 
+#variance within groups test
+
+# with Levene's test
+#leveneTest(dataset$dependent variable, dataset$independent variable)
+leveneTest(df_NEE$flux_value, df_NEE$landscape_position) #p above 0.05 means there no sig variance within groups, so data is distr normally --> p = 0.57, so not sig 
+
+#If I need to log transform:
+#dataset$new_name of log dataset <- log(dataframe$dependent variable) 
+#same for square rooting transformation, just use "sqrt"
+
+
+#This not working, look into later 
+#checking ratio of largest grp var to smallest group var, needs to be 3 or below 
+grp_vars <- with(df_NEE, tapply(flux_type,landscape_position,var))
+max(grp_vars)/min(grp_vars)
+
+
+
+```
+
+#EC RECO
+```{r}
+df_RECO <- df_EClong %>% filter(flux_type == "RECO")
+
+
+model_RECO <- lme(flux_value ~ landscape_position, random = ~1 | plot_ID, data = df_RECO)
+summary(model_RECO)
+```
+
+
+#Checking out the overall data, filtered, but not subset 
+```{r}
+library(ggplot2)
+
+#plot - filtered df but not converted or subset, units are umolC/m2/s
+
+# Create the scatter plot
+ggplot(df_soilchambers_filtered, aes(x = measurement_date, y = flux_CO2, 
+                                      color = landscape_position, shape = chamber_type)) +
+  geom_point(size = 3, position = position_jitter(width = 0.8, height = 0)) +  # Adjust point size for better visibility
+  labs(x = "Measurement Date", y = "CO2 Flux (umol/m2/s)", 
+       title = "CO2 Flux vs Measurement Date by Landscape Position and Chamber Type") +
+  scale_color_manual(values = c("upland" = "green", "lowland" = "blue", "slope" = "red")) +  # Adjust color palette as needed
+  theme_minimal() +  # Apply minimal theme for a clean look
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+
+
+
+```
+
+
+#can subset by year
+#can subset by landscape popsition 
+#def need to subset by chamber 
+
+#find a way to add the temp and inundation data into here** 
+
+
+#### Create yearly dataframes
+
+
+```{r}
+daily_fullset_avg$date = daily_fullset_avg$date
+
+year_df <- function(daily_fullset_avg, year) {
+  daily_fullset_avg %>%
+    filter(format(date, "%Y") == as.character(year)) %>%
+    mutate(DOY = yday(date))
+}
+```
+
+
+#Need to make new df in the d_long format so I can run analyses 
+#Mixed effects model - NLME - daytime chambers (tr)
+```{r}
+library(nlme)
+# landscape_NLME <- lme(flux_CO2 ~ landscape_position, random = ~1|PlotNumber, data = percentC) 
+# #na.action=na.exclude) #lets R work around the 0 values in dataset 
+# summary(percentC_NLME, corr = F)
+# anova(percentC_NLME)
+# # each plot gets a fitted intercept
+# coef(percentC_NLME)
+
+
+#Anova(StDead_LMM, test.statistic = "F", type = "II", ddf = "Kenward-Roger")
+library(nlme)
+
+landscape_NLME <- lme(flux_CO2 ~ landscape_position * plot_type, data = df_trns )
+summary(landscape_NLME, corr = F)
+anova(Slandscape_NLME)
+# each plot gets a fitted intercept
+coef(landscape_NLME)
+
+
+library(emmeans)
+emmeans(landscape_NLME, revpairwise ~ Location | SiteType) |>
+  confint() 
+#ASK CLAY: can we go over these results one more time, just to make sure I understand what's useful to report --> these results show up the average data value for a site type at each location, and the df and CL, right? What are the contrast estimates again? simply the difference in means for each site type between locations? just shows us which location has higher nutrient data averages and by how much? --> yes**
+
+#might not need to add in siteId as random, as the StDead_LMM model already incorporated it...?
+emmeans(landscape_NLME, pairwise ~ landscape_position | plot_type, random = ~1|plot_ID, adjust="tukey")
+
+
+# mixed effect models
+library(lme4)
+library(emmeans)
+library(car)
+# lme model, pretty much an ANOVA
+PB19_PRSprobesNO3N_LMM <- lmer(data ~ SiteType + (1|PlotNumber), data = NO3N )
+summary(PB19_PRSprobesNO3N_LMM, corr = F)
+Anova(PB19_PRSprobesNO3N_LMM,test.statistic = "F", type = "II", ddf = "Kenward-Roger")
+# each plot gets a fitted intercept
+coef(PB19_PRSprobesNO3N_LMM)
+```
+
+
+#Scatterplot by date, these don't look very good, too much overlap - find a better way
+```{r}
+# Create the scatter plot
+ggplot(daily_fullset_avg_2018, aes(x = date, y = FCO2, 
+                                     color = landscape_position, shape = chamber_type)) +
+  geom_point(size = 3, position = position_jitter(width = 0.3, height = 0)) +  # Adjust point size for better visibility
+  labs(x = "Landscape position", y = "CO2 Flux (g/m2/day)", 
+       title = "2018 - CO2 Flux vs Measurement Date by Landscape Position and Chamber Type") +
+  scale_color_manual(values = c("upland" = "green", "lowland" = "blue", "slope" = "red")) +  # Adjust color palette as needed
+  theme_minimal() #+  # Apply minimal theme for a clean look
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+```{r}
+# Create the ggplot
+ggplot(df_soilchambers, aes(x = measurement_date, y = flux_CO2, color = landscape_position)) +
+  geom_point() +          # Use points for each carbon flux measurement
+   labs(x = "Measurement Date", 
+       y = "Carbon Flux",
+       title = "Carbon Fluxes over Time by Landscape Position") +
+  theme_minimal()
+
+# Create the ggplot
+ggplot(df_soilchambers, aes(x = landscape_position, y = flux_CO2)) +
+  geom_point() +          # Use points for each carbon flux measurement
+
+  labs(x = "Landscape Position", 
+       y = "Carbon Flux",
+       title = "CO2 Flux by Landscape Position") +
+  theme_minimal()
+
+```
+
+
+
+
+

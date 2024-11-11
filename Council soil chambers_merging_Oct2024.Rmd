@@ -1,0 +1,370 @@
+---
+title: "Council Soil Chamber" #time is in AK daylight time**  
+output: html_document
+date: "2024-10-22"
+---
+
+#Note that for comparison purposes, both instruments 
+were used to measure chamber fluxes on July 18, 2018 --> remove potential measurement duplicates from this date?
+
+#measure the Net Ecosystem Exchange (NEE) with the transparent chamber during the day (when photosynthesis is occurring) and the Ecosystem Respiration (Reco) with the opaque chamber during the night (when only respiration is happening), then subtract the Reco value from the NEE value to get GPP: GPP = NEE (transparent chamber) - Reco (opaque chamber)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r, include=FALSE}
+rm(list= ls())
+
+library(data.table)
+library(ggplot2)
+library(cowplot)
+library(openair)
+library(plotrix)
+library(signal)
+library(svMisc)
+library(zoo)
+library(stringr)
+library(plyr)
+library(viridis)
+library(lubridate)
+library(tidyverse)
+library(gridExtra)
+library(plotly)
+library(RColorBrewer)
+library(pracma)
+library(dplyr)
+library(openair)
+
+```
+#all reshaped and merged df (taken from below, need to clean up code)
+```{r}
+#filtered for p<0.05; units umol/m2/s or nmol/m2/s
+df_soilchambers_filtered = fread('./council_filtered_soil_chamber_fluxes_2017to2019.csv')
+
+#fluxes and moisture/temp df merged; FCO2 in units g/m2/s
+df_fulljoin = fread('./council_fulljoin_soilchamber_fluxes_moisttemp_2017to2019.csv')
+
+#used transparent and opaque chambers to identify NEE and RECO, then merged back together 
+df_NEE_RECO2 = fread('./council_fulljoin_soilchamber_fluxes_moisttemp_2017to2019.csv')
+
+#calculated GPP (NEE - Reco)
+df_NEE_RECO2_GPP = fread('./council_NEE_RECO2_GPP_2017to2019.csv')
+
+
+```
+
+
+#Filter out all flux measurements with a p-value greater than 0.05 - these are not good instrument measurements
+```{r}
+
+#"C:\Users\kkent\Documents\Council Data\CN_MM71_soil_chamber_fluxes_LGR_20210120.csv"
+#"C:\Users\kkent\Documents\Council Data\CN_MM71_soil_chamber_fluxes_Picarro_20210120.csv"
+
+
+#soil chamber data from LGR
+df_LGR = fread('~/Council Data/CN_MM71_soil_chamber_fluxes_LGR_20210120.csv')
+
+#soil chamber data from Picarro
+df_Pic = fread('~/Council Data/CN_MM71_soil_chamber_fluxes_Picarro_20210120.csv')
+
+#Remove first row with units 
+
+df_LGR <- df_LGR[-1,]
+df_Pic <- df_Pic[-1,]
+
+#Create a row for each df that denotes which instrument was used so we can tell when we merge later 
+df_LGR$instrument <- "LGR"
+df_Pic$instrument <- "Pic"
+
+#make numeric columns numeric 
+df_LGR[, 16:23] <- lapply(df_LGR[, 16:23], as.numeric)
+df_Pic[, 16:23] <- lapply(df_Pic[, 16:23], as.numeric)
+
+
+#Soil moisture and temp 
+
+df_soil_temp_thaw = fread("~/Council Data/CN_MM71_ chamber_soil_temp_moist_thaw_20210120.csv")
+df_soil_temp_thaw<- df_soil_temp_thaw[-1,] #remove first row with units 
+
+#Make the numeric columns numeric, all were imported as character 
+df_soil_temp_thaw[, 16:24] <- lapply(df_soil_temp_thaw[, 16:24], as.numeric)
+
+#thaw depth in cm
+#soil temp in C
+#standing water in cm 
+#time = AKDT
+#measurement date = yyyy-mm-dd
+
+
+#For LGR dataset, there are p values - filter out all p>0.05 before binding; no p values available for Pic dataset
+library(dplyr)
+
+# Filter the dataset to omit rows with flux_CO2_Pvalue and CH4_Pvalue above 0.049
+df_LGR_filtered <- df_LGR %>%
+  filter(flux_CO2_Pvalue <= 0.049, CH4_Pvalue <= 0.049)
+```
+
+#Create useable time
+```{r}
+#create useable date for each dataset jere  
+ df_LGR$measurement_date = as.character(df_LGR$measurement_date)
+ df_LGR_filtered$measurement_date = as.character(df_LGR_filtered$measurement_date)
+ df_Pic$measurement_date = as.character(df_Pic$measurement_date)
+df_soil_temp_thaw$measurement_date = as.character(df_soil_temp_thaw$measurement_date)
+
+df_LGR$measurement_date = as.POSIXct(df_LGR$measurement_date, format = "%Y-%m-%d") 
+df_LGR_filtered$measurement_date = as.POSIXct(df_LGR_filtered$measurement_date, format = "%Y-%m-%d")
+df_Pic$measurement_date= as.POSIXct(df_Pic$measurement_date, format = "%Y-%m-%d")
+df_soil_temp_thaw$measurement_date= as.POSIXct(df_soil_temp_thaw$measurement_date, format = "%Y-%m-%d")
+
+```
+
+
+```{r}
+
+#combine the df
+df_soilchambers_filtered <- rbind(df_LGR_filtered, df_Pic) #with LGR filtered for p value
+df_soilchambers <- rbind(df_LGR, df_Pic) #not filtered, all original data 
+
+
+#make the fluxes numeric; R read them in as characters 
+df_soilchambers$flux_CO2 = as.numeric(df_soilchambers$flux_CO2)
+df_soilchambers$flux_CH4 = as.numeric(df_soilchambers$flux_CH4)
+df_soilchambers_filtered$flux_CO2 = as.numeric(df_soilchambers_filtered$flux_CO2)
+df_soilchambers_filtered$flux_CH4 = as.numeric(df_soilchambers_filtered$flux_CH4)
+
+
+#Save new df of orig soil data, not filtered
+write.csv(x = df_soilchambers,file = './council_soil_chamber_fluxes_2017to2019.csv',quote = F,row.names = F)
+
+#Save new df of filtered LGR data with Pic data 
+write.csv(x = df_soilchambers_filtered,file = './council_filtered_soil_chamber_fluxes_2017to2019.csv',quote = F,row.names = F)
+
+#check
+df_soilchambers = fread('./council_soil_chamber_fluxes_2017to2019.csv')
+
+```
+
+#Load merged and filtered soil chamber df
+```{r}
+#Can clear above and reload filtered version of df 
+df_soilchambers_filtered = fread('./council_filtered_soil_chamber_fluxes_2017to2019.csv')
+
+#fluxes in units umol_m-2_s-1
+```
+
+
+
+#create useable date and timestamp for the combined soil chamber df & soil moisture/temp df 
+```{r}
+# Convert the 'measurement_date' to Date format if not already
+df_soilchambers_filtered$measurement_date <- as.Date(df_soilchambers_filtered$measurement_date, format = "%Y-%m-%d")
+df_soil_temp_thaw$measurement_date <- as.Date(df_soil_temp_thaw$measurement_date, format = "%Y-%m-%d")
+
+
+# Convert time to a proper time format
+df_soilchambers_filtered$time <- format(strptime(df_soilchambers_filtered$time, format="%H:%M"), "%H:%M")
+df_soil_temp_thaw$time <- format(strptime(df_soil_temp_thaw$time, format="%H:%M"), "%H:%M")
+
+# Combine the date and time into a new column
+df_soilchambers_filtered$date <- paste(df_soilchambers_filtered$measurement_date, df_soilchambers_filtered$time)
+df_soil_temp_thaw$date <- paste(df_soil_temp_thaw$measurement_date, df_soil_temp_thaw$time)
+
+# Convert the new datetime column to the desired format "%Y%m%d%H%M"
+df_soilchambers_filtered$date <- format(as.POSIXct(df_soilchambers_filtered$date, format="%Y-%m-%d %H:%M"))
+df_soil_temp_thaw$date <- format(as.POSIXct(df_soil_temp_thaw$date, format="%Y-%m-%d %H:%M"))
+
+
+```
+
+
+#Extract the experiment type and add new column: BGC = biogeochem, EC = eddy covar tower footprint, MW = micro-warming experiment
+```{r}
+library(stringr)
+
+# Create a new column for experiment type / plot type 
+df_soilchambers_filtered$plot_type <- str_extract(df_soilchambers_filtered$plot_ID, "^[A-Z]+")
+df_soil_temp_thaw$plot_type <- str_extract(df_soil_temp_thaw$plot_ID, "^[A-Z]+")
+
+```
+
+#subset the dataset by chamber type = opaque vs transparent 
+
+```{r}
+library(dplyr)
+
+#These datasets should be filtered for p<0.05, and have proper datetime formatting 
+
+# Subset the dataset for chamber_type = "opq" -- use this for ecosystem resp 
+df_opq <- df_soilchambers_filtered %>%
+  filter(chamber_type == "Opq")
+
+#Save new df 
+write.csv(x = df_opq,file = './council_opaque_soil_chamber_fluxes_2017to2019.csv',quote = F,row.names = F)
+
+
+# Subset the dataset for chamber_type = "trns" -- use this for NEE 
+df_trns <- df_soilchambers_filtered %>%
+  filter(chamber_type == "Trns")
+
+#Save new df 
+write.csv(x = df_trns,file = './council_transparent_soil_chamber_fluxes_2017to2019.csv',quote = F,row.names = F)
+```
+
+#Create new df to reduce to variables of interest
+```{r}
+df_soil = data.frame(df_soilchambers_filtered$site,
+                   df_soilchambers_filtered$area,
+                   df_soilchambers_filtered$plot_type,
+                   df_soilchambers_filtered$plot_ID,
+                    df_soilchambers_filtered$latitude,
+                   df_soilchambers_filtered$longitude,
+                   df_soilchambers_filtered$easting,
+                    df_soilchambers_filtered$northing,
+                   df_soilchambers_filtered$measurement_date,
+                   df_soilchambers_filtered$time,
+                     df_soilchambers_filtered$landscape_position,
+                    df_soilchambers_filtered$chamber_type,
+                   df_soilchambers_filtered$flux_CO2,
+                   df_soilchambers_filtered$flux_CH4,
+                     df_soilchambers_filtered$instrument,
+                      df_soilchambers_filtered$date)
+
+names(df_soil) = c('site',
+                 'area',
+                'plot_type',
+                'plot_ID',
+                'latitude',
+                'longitude',
+                'easting',
+                'northing',
+                 'measurement_date',
+                 'time',
+                 'landscape_position',
+                 'chamber_type',
+                 'flux_CO2',
+                 'flux_CH4',
+                'instrument',
+                 'date')
+          
+```
+
+
+#Convert soil chamber fluxes from u or nmol/m2/s to g/m2/s
+```{r}
+#tower data in g/m2 -- better to use g or leave as umol?
+
+# Net CO2 Flux - convert from umol/m2/s to gC/m2/s
+df_soil <- df_soil %>%
+  mutate(FCO2 = ifelse(is.na(flux_CO2), 0, flux_CO2 * (1/1000000) * 12))
+
+
+#Net CH4 flux --> convert from nmol/m2/s to gC/m2/s
+df_soil <- df_soil %>%
+  mutate(FCH4 = ifelse(is.na(flux_CH4), 0, flux_CH4 * (1/1000000000)*12))
+
+
+```
+
+#merge soil chamber flux data with temp and moisture 
+```{r}
+#take variables of interest from the soil chamber temp / thaw df 
+
+df_moisttemp <- df_soil_temp_thaw[, c("site", "area", "plot_type", "plot_ID", "latitude", "longitude", "easting", "northing", "measurement_date", "time", "landscape_position", "inundated", "standing_water_depth", "soil_temp_10_cm", "soil_temp_15_cm", "soil_temp_20_cm", "air_temp", "thawdepth", "VWC", "Ka", "date" )]
+
+
+# Merge the two df by matching on plot_ID, measurement date, and landscape position 
+# df_combined <- df_soil %>%
+#   left_join(df_moisttemp %>% select(plot_ID, measurement_date, landscape_position,inundated, standing_water_depth, soil_temp_10_cm, soil_temp_15_cm, soil_temp_20_cm, air_temp, thawdepth, VWC, Ka), 
+#             by = c("plot_ID", "measurement_date", "landscape_position"))
+# 
+# 
+# 
+# #Save new df 
+# write.csv(x = df_combined,file = './council_soilchamber_fluxes_moisttemp_2017to2019.csv',quote = F,row.names = F)
+
+
+#Kyle recommended this way of joining the flux and temp/moisture df
+# Merge the two df by matching on plot_ID, measurement date, and landscape position 
+df_fulljoin <- df_soil %>%
+  full_join(df_moisttemp %>% select(plot_ID, measurement_date, landscape_position,inundated, standing_water_depth, soil_temp_10_cm, soil_temp_15_cm, soil_temp_20_cm, air_temp, thawdepth, VWC, Ka), 
+            by = c("plot_ID", "measurement_date", "landscape_position"))
+
+#Save new df 
+write.csv(x = df_fulljoin,file = './council_fulljoin_soilchamber_fluxes_moisttemp_2017to2019.csv',quote = F,row.names = F)
+
+#load new df 
+df_fulljoin = fread('./council_fulljoin_soilchamber_fluxes_moisttemp_2017to2019.csv')
+```
+
+
+#Create new df to identify NEE and RECO (and find GPP)
+```{r}
+# Subset the dataset for chamber_type = "trns" -- use this for NEE 
+df_trns <- df_fulljoin %>%
+  filter(chamber_type == "Trns")
+
+# Subset the dataset for chamber_type = "opq" -- use this for ecosystem resp 
+df_opq <- df_fulljoin %>%
+  filter(chamber_type == "Opq")
+
+#change "flux_CO2" in trns df to "NEE" and in opq df to "RECO" 
+# df_trns <- df_trns %>% rename(NEE = flux_CO2) #in umol 
+# df_opq <- df_opq %>% rename(RECO = flux_CO2) #in umol 
+df_trns <- df_trns %>% rename(NEE = FCO2) #in g
+df_opq <- df_opq %>% rename(RECO = FCO2) #in g
+
+#merge the df_trns and df_opq back together into one df - units gC
+df_NEE_RECO <- df_trns %>%
+  full_join(df_opq %>%select(plot_type, plot_ID, measurement_date, landscape_position, time, chamber_type, RECO, flux_CH4, inundated, standing_water_depth, soil_temp_10_cm, soil_temp_15_cm, soil_temp_20_cm, air_temp, thawdepth, VWC, Ka, instrument), 
+            by = c("plot_ID", "measurement_date", "landscape_position"))
+
+
+#merge the df_trns and df_opq back together into one df
+df_NEE_RECO <- df_trns %>%
+  full_join(df_opq %>%select(time, chamber_type, RECO, flux_CH4, inundated, standing_water_depth, soil_temp_10_cm, soil_temp_15_cm, soil_temp_20_cm, air_temp, thawdepth, VWC, Ka, instrument), 
+            by = c("plot_ID", "measurement_date", "landscape_position"))
+
+
+
+####using this version*******************************************************************************************
+
+# Merge the dataframes using the merge function - this cuts off all the extra RECO measurements that are not aligned with an NEE measurement-- excludes all RECO-only measurements, and makes sure everything is matched with both a transparent and opaque chamber
+df_NEE_RECO2 <- merge(df_trns, df_opq[, c("plot_ID", "measurement_date", "landscape_position", "RECO")], 
+                     by = c("plot_ID", "measurement_date", "landscape_position"), 
+                     all.x = TRUE)
+
+
+#save new NEE and RECO df 
+write.csv(x = df_NEE_RECO2,file = './council_NEE and RECO2_2017to2019.csv',quote = F,row.names = F)
+
+```
+
+#Calc GPP from difference between NEE and RECO: The combination of dark and transparent chambers --> GPP (NEE – Reco) 
+
+#**RECO - NEE to get a pos GPP **not required but typically makes more sense to have GPP be pos
+```{r}
+df_NEE_RECO2_GPP <- df_NEE_RECO2 %>%
+  mutate(GPP = (NEE - RECO)* -1)
+
+
+df_NEE_RECO2_GPP <- df_NEE_RECO2_GPP %>%
+  mutate(GPP = GPP * -1)
+
+
+#positive GPP
+# df_NEE_RECO2_GPP <- df_NEE_RECO2 %>%
+#   mutate(GPP = RECO - NEE)
+
+
+
+#Save with pos GPP 
+write.csv(x = df_NEE_RECO2_GPP, file = './council_NEE_RECO2_GPP_2017to2019.csv', quote = F, row.names = F) 
+
+```
+
+
+
